@@ -1,0 +1,106 @@
+#include <Wire.h>
+#include <Adafruit_MPU6050.h>
+#include <SoftwareSerial.h>
+#include <TinyGPS++.h>
+#include <LiquidCrystal_I2C.h>
+
+// LCD Configuration
+LiquidCrystal_I2C lcd(0x27, 16, 2);  // Adjust address if needed
+
+// GPS Configuration
+SoftwareSerial gpsSerial(3, 4);       // RX=Pin 3, TX unused
+TinyGPSPlus gps;
+
+// MPU6050 Configuration
+Adafruit_MPU6050 mpu;
+const float COLLISION_THRESHOLD = 2.0; // Adjust based on testing
+bool collisionDetected = false;        // Flag to track collision state
+float collisionLat = 0.0;
+float collisionLon = 0.0;
+unsigned long lastDisplayChange = 0;
+bool showLat = true;                  // Toggle between lat/long display
+
+void setup() {
+  Serial.begin(9600);
+  gpsSerial.begin(9600);
+  
+  // Initialize LCD
+  lcd.init();
+  lcd.backlight();
+  lcd.print("Initializing...");
+
+  // Initialize MPU6050
+  if (!mpu.begin()) {
+    lcd.clear();
+    lcd.print("MPU6050 Error!");
+    while (true);
+  }
+  mpu.setAccelerometerRange(MPU6050_RANGE_16_G);
+  delay(1000);
+  lcd.clear();
+}
+
+void loop() {
+  // Continuously read GPS data in background
+  while (gpsSerial.available() > 0) {
+    gps.encode(gpsSerial.read());
+  }
+
+  if (collisionDetected) {
+    // Alternate between showing lat and long every 2 seconds
+    if (millis() - lastDisplayChange > 2000) {
+      lastDisplayChange = millis();
+      showLat = !showLat;
+      
+      lcd.setCursor(0, 0);
+      lcd.print("COLLISION!       ");
+      lcd.setCursor(0, 1);
+      
+      if (collisionLat != 0.0 && collisionLon != 0.0) {
+        if (showLat) {
+          lcd.print("Lat:");
+          lcd.print(collisionLat, 6);
+          lcd.print("    ");
+        } else {
+          lcd.print("Lon:");
+          lcd.print(collisionLon, 6);
+          lcd.print("    ");
+        }
+      } else {
+        lcd.print("No GPS Fix       ");
+      }
+    }
+    return;  // Stop further processing
+  }
+
+  // Read sensor data
+  sensors_event_t a, g, temp;
+  mpu.getEvent(&a, &g, &temp);
+
+  // Calculate acceleration magnitude
+  float accel = sqrt(sq(a.acceleration.x) + sq(a.acceleration.y) + sq(a.acceleration.z)) / 9.81;
+
+  if (accel > COLLISION_THRESHOLD) {
+    collisionDetected = true;
+    lcd.clear();
+    lcd.print("Collision Detected!");
+    delay(2000); // Show detection message for 2 seconds
+    
+    // Store current GPS data if available
+    if (gps.location.isValid()) {
+      collisionLat = gps.location.lat();
+      collisionLon = gps.location.lng();
+    }
+    return;
+  }
+
+  // Normal monitoring display
+  lcd.setCursor(0, 0);
+  lcd.print("Monitoring...    ");
+  lcd.setCursor(0, 1);
+  lcd.print("Accel: ");
+  lcd.print(accel);
+  lcd.print("g  ");
+
+  delay(100);
+}
